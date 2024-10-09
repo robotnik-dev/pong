@@ -1,6 +1,3 @@
-{"rust-analyzer.cargo.extraEnv": {
-    "RUSTFLAGS": "-Clinker=clang -Clink-arg=-fuse-ld=mold"
-},
-"rust-analyzer.checkOnSave": false,
-"rust-analyzer.check.overrideCommand": ["cargo", "check"] // , "--target", "x86_64-pc-windows-gnu"]
+{
+    "rust-analyzer.checkOnSave": false,
 }

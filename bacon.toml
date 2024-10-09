@@ -5,7 +5,7 @@
 # You can also check bacon's own bacon.toml file
 #  as an example: https://github.com/Canop/bacon/blob/main/bacon.toml
 
-default_job = "check"
+default_job = "watch"
 
 [jobs.check]
 command = ["cargo", "check", "--color", "always"]
@@ -92,42 +92,40 @@ command = ["cargo", "run", "--color", "always", "--example"]
 need_stdout = true
 allow_warnings = true
 
-# my own local pipeline for checking, testing, building and running the game on save
 [jobs.watch]
 command = [
     "cargo", "check",
-    "--target", "x86_64-pc-windows-gnu",
-    "--color", "always",
-]
-need_stdout = false
-on_success = "job:test-before-build"
-
-[jobs.test-before-build]
-command = [
-    "cargo", "test",
-    "--target", "x86_64-pc-windows-gnu",
-    "--color", "always",
-    "--", "--color", "always",
-]
-need_stdout = true
-allow_warnings = true
-on_success = "job:build-before-run"
-
-[jobs.build-before-run]
-command = [
-    "cargo", "build",
-    "--target", "x86_64-pc-windows-gnu",
+    "--features", "bevy/dynamic_linking",
     "--color", "always"
 ]
+
+[jobs.fast-build]
+command = [
+    "cargo", "build",
+    "--features", "bevy/dynamic_linking",
+    "--color", "always"
+]
+on_success = "job:fast-test"
+allow_warnings = true
+
+[jobs.fast-test]
+command = [
+    "cargo", "test",
+    "--features", "bevy/dynamic_linking",
+    "--color", "always"
+]
+on_success = "job:fast-run"
 need_stdout = true
 allow_warnings = true
-on_success = "job:run-app"
 
-[jobs.run-app]
+[jobs.fast-run]
 command = [
-    "./run_win.sh",
+    "cargo", "run",
+    "--features", "bevy/dynamic_linking",
+    "--color", "always"
 ]
 on_success = "job:watch"
+allow_warnings = true
 
 # You may define here keybindings that would be specific to
 # a project, for example a shortcut to launch a specific job.
@@ -136,3 +134,4 @@ on_success = "job:watch"
 [keybindings]
 # alt-m = "job:my-job"
 c = "job:clippy-all" # comment this to have 'c' run clippy on only the default target
+r = "job:fast-build"
