@@ -5,14 +5,21 @@
 # You can also check bacon's own bacon.toml file
 #  as an example: https://github.com/Canop/bacon/blob/main/bacon.toml
 
-default_job = "watch"
+default_job = "check"
+summary = true
 
 [jobs.check]
-command = ["cargo", "check", "--color", "always"]
+command = [
+    "cargo", "check", "--color", "always",
+    "--features", "bevy/dynamic_linking"
+]
 need_stdout = false
 
 [jobs.check-all]
-command = ["cargo", "check", "--all-targets", "--color", "always"]
+command = [
+    "cargo", "check", "--all-targets", "--color", "always",
+    "--features", "bevy/dynamic_linking",
+]
 need_stdout = false
 
 # Run clippy on the default target
@@ -51,9 +58,15 @@ need_stdout = false
 [jobs.test]
 command = [
     "cargo", "test", "--color", "always",
+    "--features", "bevy/dynamic_linking",
     "--", "--color", "always", # see https://github.com/Canop/bacon/issues/124
 ]
 need_stdout = true
+
+[jobs.nextest]
+command = ["cargo", "nextest", "run", "--color", "always", "--hide-progress-bar", "--failure-output", "final"]
+need_stdout = true
+analyzer = "nextest"
 
 [jobs.doc]
 command = ["cargo", "doc", "--color", "always", "--no-deps"]
@@ -72,16 +85,19 @@ on_success = "back" # so that we don't open the browser at each change
 # properly parsed.
 # If your program never stops (eg a server), you may set `background`
 # to false to have the cargo run output immediately displayed instead
-# of waiting for program's end.
+# of waiting for program's end. If you prefer to have it restarted at
+# every change, then uncomment the 'on_change_strategy' line.
 [jobs.run]
 command = [
     "cargo", "run",
     "--color", "always",
+    "--features", "bevy/dynamic_linking",
     # put launch parameters for your program behind a `--` separator
 ]
 need_stdout = true
 allow_warnings = true
-background = true
+background = false
+on_change_strategy = "kill_then_restart"
 
 # This parameterized job runs the example of your choice, as soon
 # as the code compiles.
@@ -92,41 +108,6 @@ command = ["cargo", "run", "--color", "always", "--example"]
 need_stdout = true
 allow_warnings = true
 
-[jobs.watch]
-command = [
-    "cargo", "check",
-    "--features", "bevy/dynamic_linking",
-    "--color", "always"
-]
-
-[jobs.fast-build]
-command = [
-    "cargo", "build",
-    "--features", "bevy/dynamic_linking",
-    "--color", "always"
-]
-on_success = "job:fast-test"
-allow_warnings = true
-
-[jobs.fast-test]
-command = [
-    "cargo", "test",
-    "--features", "bevy/dynamic_linking",
-    "--color", "always"
-]
-on_success = "job:fast-run"
-need_stdout = true
-allow_warnings = true
-
-[jobs.fast-run]
-command = [
-    "cargo", "run",
-    "--features", "bevy/dynamic_linking",
-    "--color", "always"
-]
-on_success = "job:watch"
-allow_warnings = true
-
 # You may define here keybindings that would be specific to
 # a project, for example a shortcut to launch a specific job.
 # Shortcuts to internal functions (scrolling, toggling, etc.)
@@ -134,4 +115,3 @@ allow_warnings = true
 [keybindings]
 # alt-m = "job:my-job"
 c = "job:clippy-all" # comment this to have 'c' run clippy on only the default target
-r = "job:fast-build"
