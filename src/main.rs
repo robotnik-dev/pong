@@ -1,28 +1,33 @@
 use bevy::{
     color::palettes::css::{BLUE, GREEN, RED},
     prelude::*,
-    sprite::MaterialMesh2dBundle,
+    sprite::{MaterialMesh2dBundle, Mesh2dHandle},
+    utils::info,
 };
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_rapier2d::prelude::*;
+
+mod utils;
+use utils::{aabb_collision, get_random_direction_v3};
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, WorldInspectorPlugin::new()))
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .add_plugins(RapierDebugRenderPlugin::default())
         .insert_resource(ResolutionSettings {
-            small: Vec2 { x: 640.0, y: 360.0 },
-            medium: Vec2 { x: 800.0, y: 600.0 },
-            large: Vec2 {
-                x: 1920.0,
-                y: 1080.0,
-            },
+            small: Vec2 { x: 640., y: 360. },
+            medium: Vec2 { x: 800., y: 600. },
+            large: Vec2 { x: 1920., y: 1080. },
         })
         .register_type::<Movement>()
         .add_systems(Startup, setup)
-        .add_systems(Update, toggle_window_resolution)
-        .add_systems(Update, (move_player).chain())
+        .add_systems(
+            Update,
+            (
+                toggle_window_resolution,
+                move_player,
+                move_ball,
+                bounce_ball,
+            ),
+        )
         .run();
 }
 
@@ -39,14 +44,14 @@ struct Player;
 #[derive(Component, Debug)]
 struct Opponent;
 
-#[derive(Debug, Component)]
-struct Ball;
-
 #[derive(Debug, Component, Reflect)]
 struct Movement {
     speed: f32,
-    direction: Vec2,
+    direction: Option<Vec3>,
 }
+
+#[derive(Debug, Component)]
+struct Ball;
 
 fn toggle_window_resolution(
     // HACK: change keys into proper settings UI
@@ -88,24 +93,15 @@ fn setup(
         ..default()
     });
 
+    // spawn player
     let character_width = 64.;
     let character_height = 250.;
-    // spawn player
     commands.spawn((
         Player,
-        Collider::cuboid(character_width / 2., character_height / 2.0),
-        RigidBody::KinematicVelocityBased,
-        KinematicCharacterController {
-            apply_impulse_to_dynamic_bodies: true,
-            ..default()
-        },
-        Velocity::zero(),
         Movement {
-            speed: 200.0,
-            direction: Vec2::ZERO,
+            speed: 3.0,
+            direction: None,
         },
-        Restitution::coefficient(1.0),
-        Friction::coefficient(0.0),
         MaterialMesh2dBundle {
             mesh: meshes
                 .add(Rectangle::new(character_width, character_height))
@@ -120,25 +116,13 @@ fn setup(
     // spawn Opponent
     commands.spawn((
         Opponent,
-        Collider::cuboid(character_width / 2., character_height / 2.0),
-        RigidBody::KinematicVelocityBased,
-        KinematicCharacterController {
-            apply_impulse_to_dynamic_bodies: true,
-            ..default()
-        },
         Movement {
-            speed: 10.0,
-            direction: Vec2::ZERO,
+            speed: 2.5,
+            direction: None,
         },
-        Velocity::zero(),
-        Restitution::coefficient(1.0),
-        Friction::coefficient(0.0),
         MaterialMesh2dBundle {
             mesh: meshes
-                .add(Rectangle::from_size(Vec2::new(
-                    character_width,
-                    character_height,
-                )))
+                .add(Rectangle::new(character_width, character_height))
                 .into(),
             material: materials.add(Color::from(RED)),
             // at the right side of the screen
@@ -152,23 +136,16 @@ fn setup(
     ));
 
     // spawn ball in the middle
-    let ball_radius = 25.;
     commands.spawn((
         Ball,
-        RigidBody::Dynamic,
-        GravityScale(0.),
-        ExternalImpulse {
-            impulse: Vec2::new(1_000_000., 0.),
-            torque_impulse: 0.,
+        Movement {
+            speed: 6.,
+            direction: Some(get_random_direction_v3()),
         },
-        Collider::ball(ball_radius),
-        Restitution::coefficient(1.0),
-        Friction::coefficient(0.0),
-        Ccd::enabled(),
-        Sleeping::disabled(),
         MaterialMesh2dBundle {
-            mesh: meshes.add(Circle::new(ball_radius)).into(),
+            mesh: meshes.add(Circle::new(25.)).into(),
             material: materials.add(Color::from(GREEN)),
+            // at the right side of the screen
             transform: Transform::from_xyz(window.width() / 2.0, window.height() / 2.0, 0.),
             ..default()
         },
@@ -177,14 +154,99 @@ fn setup(
 
 fn move_player(
     keys: Res<ButtonInput<KeyCode>>,
-    mut velocity_q: Query<(&mut Velocity, &mut Movement), With<Player>>,
+    mut player_q: Query<(&mut Transform, &Movement), With<Player>>,
 ) {
-    let (mut velocity, mut movement) = velocity_q.single_mut();
+    let (mut player, movement) = player_q.single_mut();
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        movement.direction = Vec2::Y;
+        player.translation.y += movement.speed;
     }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        movement.direction = Vec2::NEG_Y;
+        player.translation.y -= movement.speed;
     }
-    velocity.linvel = movement.direction * movement.speed;
+}
+
+fn move_ball(mut q_ball: Query<(&mut Transform, &Movement), With<Ball>>) {
+    let (mut transform, movement) = q_ball.single_mut();
+    if let Some(direction) = movement.direction {
+        transform.translation += direction * movement.speed;
+    }
+}
+
+/// If some collision happens between the ball and some other object (including screen bounds), redirect the balls direction without changing the velocity
+fn bounce_ball(
+    mut q_ball: Query<(&mut Movement, &Transform, &Mesh2dHandle), With<Ball>>,
+    q_objects: Query<(&Transform, &Mesh2dHandle), Without<Ball>>,
+    meshes: Res<Assets<Mesh>>,
+    mut q_window: Query<&Window>,
+) {
+    let (mut ball_movement, ball_transform, ball_handle) = q_ball.single_mut();
+    let Some(ball_mesh) = meshes.get(ball_handle.id()) else {
+        return;
+    };
+    let Some(aabb_ball) = ball_mesh.compute_aabb() else {
+        return;
+    };
+
+    // check screen collision
+    let mut impact_point = Vec3::ZERO;
+    let window = q_window.single_mut();
+    if (ball_transform.translation.x - aabb_ball.half_extents.x) <= 0. {
+        // left side
+        impact_point = Vec3::new(
+            ball_transform.translation.x - aabb_ball.half_extents.x,
+            ball_transform.translation.y,
+            0.,
+        );
+    } else if (ball_transform.translation.y + aabb_ball.half_extents.y) >= window.height() {
+        // top side
+        impact_point = Vec3::new(
+            ball_transform.translation.x,
+            ball_transform.translation.y + aabb_ball.half_extents.y,
+            0.,
+        );
+    } else if (ball_transform.translation.x + aabb_ball.half_extents.x) >= window.width() {
+        // right side
+        impact_point = Vec3::new(
+            ball_transform.translation.x + aabb_ball.half_extents.x,
+            ball_transform.translation.y,
+            0.,
+        );
+    } else if (ball_transform.translation.y - aabb_ball.half_extents.y) <= 0. {
+        // bottom side
+        impact_point = Vec3::new(
+            ball_transform.translation.x,
+            ball_transform.translation.y - aabb_ball.half_extents.y,
+            0.,
+        );
+    }
+
+    // check object collision
+    for (object_transform, handle) in q_objects.iter() {
+        if let Some(object_mesh) = meshes.get(handle.id()) {
+            let Some(aabb_object) = object_mesh.compute_aabb() else {
+                return;
+            };
+            if aabb_collision(
+                ball_transform.translation,
+                (aabb_ball.half_extents * 2.).into(),
+                object_transform.translation,
+                (aabb_object.half_extents * 2.).into(),
+            ) {
+                // TODO: compute impact point
+                // impact point is the vector pointing from the objects center to the balls center, cut in length by the half extends of the ball
+                impact_point = object_transform.translation
+                    + (object_transform.translation
+                        - ball_transform.translation
+                        - Vec3::splat(25.));
+            }
+        }
+    }
+
+    if impact_point != Vec3::ZERO {
+        // change direction of the ball
+        if let Some(direction) = ball_movement.direction {
+            let normal = (impact_point - ball_transform.translation).normalize();
+            ball_movement.direction = Some(direction - 2.0 * direction.dot(normal) * normal);
+        }
+    }
 }
